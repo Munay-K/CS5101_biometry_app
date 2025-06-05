@@ -1,0 +1,22 @@
+# Ignorar entornos virtuales
+venv/
+
+# Archivos de configuración del sistema operativo
+.DS_Store
+Thumbs.db
+
+# Archivos de Python compilados
+__pycache__/
+*.pyc
+*.pyo
+
+# Archivos de logs
+*.log
+
+# Resultados generados
+results/
+
+# Archivos temporales
+*.tmp
+*.swp
+*.swo
