@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from utils.landmarks import detect_landmarks
 from utils.verification import calculate_biometric_vector, compare_vectors
-from utils.visualization import visualize_landmarks, plot_differences
+from utils.visualization import visualize_landmarks, plot_differences, draw_face_mesh
 
 # Configuración
 ASSETS_DIR = "assets"
@@ -33,8 +33,10 @@ def main():
     similarity, is_same_person = compare_vectors(vector1, vector2, threshold=THRESHOLD)
 
     # Visualizar resultados
-    overlay1 = visualize_landmarks(img1, landmarks1)
-    overlay2 = visualize_landmarks(img2, landmarks2)
+    overlay1 = draw_face_mesh(img1.copy(), landmarks1)
+    overlay2 = draw_face_mesh(img2.copy(), landmarks2)
+    overlay1 = visualize_landmarks(overlay1, landmarks1)
+    overlay2 = visualize_landmarks(overlay2, landmarks2)
     plot_differences(vector1, vector2, os.path.join(RESULTS_DIR, "comparacion_1.png"))
 
     # Mostrar conclusiones
