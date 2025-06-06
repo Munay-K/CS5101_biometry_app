@@ -1,4 +1,5 @@
 import numpy as np
+import math
 
 def calculate_biometric_vector(landmarks):
     """Calcula un vector biométrico basado en distancias euclidianas normalizadas."""
