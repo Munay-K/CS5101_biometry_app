@@ -20,3 +20,12 @@ results/
 *.tmp
 *.swp
 *.swo
+
+# Imágenes generadas
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.webp
