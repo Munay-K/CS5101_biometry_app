@@ -9,6 +9,7 @@ from datetime import datetime
 from utils.landmarks import detect_landmarks, extract_geometric_features, get_feature_labels
 from utils.verification import calculate_biometric_vector, compare_vectors, verify_identity
 from utils.visualization import visualize_landmarks, draw_face_mesh, FACE_CONNECTIONS
+from smile_eye_detector import SmileEyeDetector
 
 class BiometricAppGUI:
     def __init__(self, root):
@@ -16,6 +17,7 @@ class BiometricAppGUI:
         self.root.title("Sistema de Verificación Biométrica Facial - Versión Mejorada")
         self.root.geometry("1400x900")
         self.root.configure(bg="#f0f0f0")
+        self.smile_eye_detector = SmileEyeDetector()
 
         # Variables
         self.master_image = None
@@ -46,6 +48,8 @@ class BiometricAppGUI:
 
         self.submitted_image_label = tk.Label(self.submitted_panel, bg="#d9d9d9")
         self.submitted_image_label.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+
 
         # Panel de resultados detallados
         self.results_panel = tk.LabelFrame(self.image_frame, text="Análisis Detallado", bg="#ffffff", font=("Arial", 12))
@@ -91,6 +95,8 @@ class BiometricAppGUI:
         menu.add_command(label="Experimento", command=self.experiment)
         menu.add_command(label="Experimento 2", command=self.experiment_2)
         menu.add_command(label="Experimento 3", command=self.experiment_3)
+        menu.add_command(label="Analizar Expresión Facial", command=self.analyze_expression)
+        menu.add_command(label="Comparar Expresiones", command=self.compare_expressions)
         self.visualization_menu.configure(menu=menu)
 
         self.visualization_menu.pack(side=tk.LEFT, padx=20)
@@ -871,6 +877,202 @@ RECOMENDACIONES:
         self.master_landmarks = None
         self.submitted_landmarks = None
         messagebox.showinfo("Experiment 3", "Face swap completed in both images.")
+
+    def analyze_expression(self):
+        """Analiza la expresión facial en ambas imágenes."""
+        if self.master_image is None and self.submitted_image is None:
+            messagebox.showwarning("Advertencia", "Debe cargar al menos una imagen.")
+            return
+        
+        try:
+            # Analizar Subject 1
+            if self.master_image is not None:
+                landmarks1 = self._get_master_landmarks()
+                analysis1 = self.smile_detector.analyze_expression(landmarks1)
+                
+                # Visualizar
+                result_img1 = self.smile_detector.visualize_detection(
+                    self.master_image, landmarks1, analysis1
+                )
+                self.display_image(result_img1, self.master_image_label)
+                
+                # Mostrar resultados en el panel de texto
+                self.features_text.delete(1.0, tk.END)
+                self.features_text.insert(tk.END, "=== ANÁLISIS DE EXPRESIÓN - SUBJECT 1 ===\n\n", "title")
+                self._display_expression_results(analysis1, "Subject 1")
+            
+            # Analizar Subject 2
+            if self.submitted_image is not None:
+                landmarks2 = self._get_submitted_landmarks()
+                analysis2 = self.smile_detector.analyze_expression(landmarks2)
+                
+                # Visualizar
+                result_img2 = self.smile_detector.visualize_detection(
+                    self.submitted_image, landmarks2, analysis2
+                )
+                self.display_image(result_img2, self.submitted_image_label)
+                
+                # Agregar resultados al panel
+                if self.master_image is not None:
+                    self.features_text.insert(tk.END, "\n\n=== ANÁLISIS DE EXPRESIÓN - SUBJECT 2 ===\n\n", "title")
+                self._display_expression_results(analysis2, "Subject 2")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al analizar expresión: {str(e)}")
+    
+    def _display_expression_results(self, analysis, subject_name):
+        """Muestra los resultados del análisis de expresión en el panel de texto."""
+        # Resultado general
+        self.features_text.insert(tk.END, f"Expresión detectada: {analysis['expression']}\n", "subtitle")
+        self.features_text.insert(tk.END, f"Puntuación de calidad: {analysis['quality_score']:.2f}\n\n")
+        
+        # Análisis de sonrisa
+        self.features_text.insert(tk.END, "ANÁLISIS DE SONRISA:\n", "subtitle")
+        smile = analysis['smile']
+        status = "✓ Sonriendo" if smile['is_smiling'] else "✗ No sonriendo"
+        color_tag = "success" if smile['is_smiling'] else "error"
+        self.features_text.insert(tk.END, f"  Estado: {status}\n", color_tag)
+        self.features_text.insert(tk.END, f"  Confianza: {smile['confidence']:.2%}\n")
+        self.features_text.insert(tk.END, f"  Métricas:\n")
+        self.features_text.insert(tk.END, f"    - Ratio boca: {smile['metrics']['mouth_ratio']:.2f}\n")
+        self.features_text.insert(tk.END, f"    - Curvatura: {smile['metrics']['mouth_curve_angle']:.1f}°\n")
+        self.features_text.insert(tk.END, f"    - Separación labios: {smile['metrics']['lip_separation']:.3f}\n")
+        
+        # Análisis de ojos
+        self.features_text.insert(tk.END, "\nANÁLISIS DE OJOS:\n", "subtitle")
+        eyes = analysis['eyes']
+        
+        # Ojo izquierdo
+        left_status = "✓ Abierto" if eyes['left_eye_open'] else "✗ Cerrado"
+        left_color = "success" if eyes['left_eye_open'] else "error"
+        self.features_text.insert(tk.END, f"  Ojo izquierdo: {left_status} (EAR: {eyes['metrics']['left_ear']:.3f})\n", left_color)
+        
+        # Ojo derecho
+        right_status = "✓ Abierto" if eyes['right_eye_open'] else "✗ Cerrado"
+        right_color = "success" if eyes['right_eye_open'] else "error"
+        self.features_text.insert(tk.END, f"  Ojo derecho: {right_status} (EAR: {eyes['metrics']['right_ear']:.3f})\n", right_color)
+        
+        self.features_text.insert(tk.END, f"  Confianza general: {eyes['confidence']:.2%}\n")
+        
+        # Recomendación
+        self.features_text.insert(tk.END, "\nRECOMENDACIÓN:\n", "subtitle")
+        if analysis['is_ideal']:
+            self.features_text.insert(tk.END, 
+                "✓ Expresión ideal detectada (sonrisa con ojos abiertos)\n", "success")
+        else:
+            self.features_text.insert(tk.END, 
+                "⚠ Se recomienda capturar con sonrisa y ojos completamente abiertos\n", "warning")
+    
+    def compare_expressions(self):
+        """Compara las expresiones entre ambas imágenes."""
+        if self.master_image is None or self.submitted_image is None:
+            messagebox.showwarning("Advertencia", "Ambas imágenes deben estar cargadas.")
+            return
+        
+        try:
+            # Analizar ambas imágenes
+            landmarks1 = self._get_master_landmarks()
+            landmarks2 = self._get_submitted_landmarks()
+            
+            analysis1 = self.smile_detector.analyze_expression(landmarks1)
+            analysis2 = self.smile_detector.analyze_expression(landmarks2)
+            
+            # Crear ventana de comparación
+            comp_window = tk.Toplevel(self.root)
+            comp_window.title("Comparación de Expresiones Faciales")
+            comp_window.geometry("800x600")
+            
+            # Frame principal
+            main_frame = tk.Frame(comp_window, bg="#f0f0f0")
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Título
+            title_label = tk.Label(main_frame, text="COMPARACIÓN DE EXPRESIONES", 
+                                 font=("Arial", 16, "bold"), bg="#f0f0f0")
+            title_label.pack(pady=10)
+            
+            # Frame para las imágenes
+            images_frame = tk.Frame(main_frame, bg="#f0f0f0")
+            images_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Visualizar ambas imágenes con detecciones
+            img1_viz = self.smile_detector.visualize_detection(self.master_image, landmarks1, analysis1)
+            img2_viz = self.smile_detector.visualize_detection(self.submitted_image, landmarks2, analysis2)
+            
+            # Redimensionar para mostrar
+            scale = 0.5
+            h1, w1 = img1_viz.shape[:2]
+            h2, w2 = img2_viz.shape[:2]
+            
+            img1_small = cv2.resize(img1_viz, (int(w1*scale), int(h1*scale)))
+            img2_small = cv2.resize(img2_viz, (int(w2*scale), int(h2*scale)))
+            
+            # Convertir a formato Tkinter
+            img1_rgb = cv2.cvtColor(img1_small, cv2.COLOR_BGR2RGB)
+            img2_rgb = cv2.cvtColor(img2_small, cv2.COLOR_BGR2RGB)
+            
+            img1_pil = Image.fromarray(img1_rgb)
+            img2_pil = Image.fromarray(img2_rgb)
+            
+            img1_tk = ImageTk.PhotoImage(img1_pil)
+            img2_tk = ImageTk.PhotoImage(img2_pil)
+            
+            # Labels para las imágenes
+            img1_label = tk.Label(images_frame, image=img1_tk)
+            img1_label.image = img1_tk
+            img1_label.pack(side=tk.LEFT, padx=10)
+            
+            img2_label = tk.Label(images_frame, image=img2_tk)
+            img2_label.image = img2_tk
+            img2_label.pack(side=tk.LEFT, padx=10)
+            
+            # Frame para resultados
+            results_frame = tk.Frame(main_frame, bg="#ffffff", relief=tk.RIDGE, bd=2)
+            results_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+            
+            # Texto de comparación
+            comp_text = tk.Text(results_frame, height=15, width=80, font=("Courier", 10))
+            comp_text.pack(padx=10, pady=10)
+            
+            # Agregar resultados de comparación
+            comp_text.insert(tk.END, "=== COMPARACIÓN DE EXPRESIONES ===\n\n", "title")
+            
+            # Comparar expresiones
+            comp_text.insert(tk.END, f"Subject 1: {analysis1['expression']}\n")
+            comp_text.insert(tk.END, f"Subject 2: {analysis2['expression']}\n\n")
+            
+            # Comparar sonrisas
+            comp_text.insert(tk.END, "COMPARACIÓN DE SONRISAS:\n", "subtitle")
+            smile_diff = abs(analysis1['smile']['confidence'] - analysis2['smile']['confidence'])
+            comp_text.insert(tk.END, f"  Subject 1: {'Sí' if analysis1['smile']['is_smiling'] else 'No'} ({analysis1['smile']['confidence']:.2%})\n")
+            comp_text.insert(tk.END, f"  Subject 2: {'Sí' if analysis2['smile']['is_smiling'] else 'No'} ({analysis2['smile']['confidence']:.2%})\n")
+            comp_text.insert(tk.END, f"  Diferencia: {smile_diff:.2%}\n\n")
+            
+            # Comparar ojos
+            comp_text.insert(tk.END, "COMPARACIÓN DE OJOS:\n", "subtitle")
+            eyes_diff = abs(analysis1['eyes']['confidence'] - analysis2['eyes']['confidence'])
+            comp_text.insert(tk.END, f"  Subject 1: {'Abiertos' if analysis1['eyes']['both_eyes_open'] else 'Cerrados'} ({analysis1['eyes']['confidence']:.2%})\n")
+            comp_text.insert(tk.END, f"  Subject 2: {'Abiertos' if analysis2['eyes']['both_eyes_open'] else 'Cerrados'} ({analysis2['eyes']['confidence']:.2%})\n")
+            comp_text.insert(tk.END, f"  Diferencia: {eyes_diff:.2%}\n\n")
+            
+            # Conclusión
+            comp_text.insert(tk.END, "CONCLUSIÓN:\n", "subtitle")
+            if analysis1['is_ideal'] and analysis2['is_ideal']:
+                comp_text.insert(tk.END, "✓ Ambas imágenes tienen expresiones ideales\n", "success")
+            elif analysis1['is_ideal'] or analysis2['is_ideal']:
+                comp_text.insert(tk.END, "⚠ Solo una imagen tiene expresión ideal\n", "warning")
+            else:
+                comp_text.insert(tk.END, "✗ Ninguna imagen tiene expresión ideal\n", "error")
+            
+            # Configurar tags
+            comp_text.tag_config("title", font=("Arial", 12, "bold"), foreground="#1976D2")
+            comp_text.tag_config("subtitle", font=("Arial", 10, "bold"), foreground="#424242")
+            comp_text.tag_config("success", foreground="#2E7D32", font=("Arial", 10, "bold"))
+            comp_text.tag_config("warning", foreground="#F57C00", font=("Arial", 10, "bold"))
+            comp_text.tag_config("error", foreground="#C62828", font=("Arial", 10, "bold"))
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al comparar expresiones: {str(e)}")
 
     def update_results_display(self):
         """Actualiza la visualización de resultados en la interfaz."""
