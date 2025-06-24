@@ -9,7 +9,7 @@ from datetime import datetime
 from utils.landmarks import detect_landmarks, extract_geometric_features, get_feature_labels
 from utils.verification import calculate_biometric_vector, compare_vectors, verify_identity
 from utils.visualization import visualize_landmarks, draw_face_mesh, FACE_CONNECTIONS
-from smile_eye_detector import SmileEyeDetector
+from smile_eye_detector import MultiFaceSmileEyeDetector
 
 class BiometricAppGUI:
     def __init__(self, root):
@@ -17,7 +17,7 @@ class BiometricAppGUI:
         self.root.title("Sistema de Verificación Biométrica Facial - Versión Mejorada")
         self.root.geometry("1400x900")
         self.root.configure(bg="#f0f0f0")
-        self.smile_eye_detector = SmileEyeDetector()
+        self.smile_eye_detector = MultiFaceSmileEyeDetector()
 
         # Variables
         self.master_image = None
@@ -48,8 +48,6 @@ class BiometricAppGUI:
 
         self.submitted_image_label = tk.Label(self.submitted_panel, bg="#d9d9d9")
         self.submitted_image_label.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
-
-
 
         # Panel de resultados detallados
         self.results_panel = tk.LabelFrame(self.image_frame, text="Análisis Detallado", bg="#ffffff", font=("Arial", 12))
@@ -95,6 +93,7 @@ class BiometricAppGUI:
         menu.add_command(label="Experimento", command=self.experiment)
         menu.add_command(label="Experimento 2", command=self.experiment_2)
         menu.add_command(label="Experimento 3", command=self.experiment_3)
+        menu.add_command(label="Face Swap (Improved)", command=self.experiment_3_improved)
         menu.add_command(label="Analizar Expresión Facial", command=self.analyze_expression)
         menu.add_command(label="Comparar Expresiones", command=self.compare_expressions)
         self.visualization_menu.configure(menu=menu)
@@ -169,6 +168,35 @@ class BiometricAppGUI:
                         if v3 in adjacency[v2]:
                             tris.add(tuple(sorted([v, v2, v3])))
             self.triangles_cache = list(tris)
+        return self.triangles_cache
+
+    def _get_consistent_triangulation(self):
+        """Get consistent triangulation based on MediaPipe face mesh connections."""
+        if self.triangles_cache is not None:
+            return self.triangles_cache
+        
+        # Use MediaPipe's face mesh connections to create triangles
+        from collections import defaultdict
+        adjacency = defaultdict(set)
+        
+        # Build adjacency from face connections
+        for v1, v2 in FACE_CONNECTIONS:
+            adjacency[v1].add(v2)
+            adjacency[v2].add(v1)
+        
+        # Find triangles in the mesh
+        triangles = set()
+        for v in adjacency:
+            neighbors = list(adjacency[v])
+            for i in range(len(neighbors)):
+                for j in range(i+1, len(neighbors)):
+                    v2, v3 = neighbors[i], neighbors[j]
+                    if v3 in adjacency[v2]:
+                        # Found a triangle - sort to avoid duplicates
+                        triangle = tuple(sorted([v, v2, v3]))
+                        triangles.add(triangle)
+        
+        self.triangles_cache = list(triangles)
         return self.triangles_cache
 
     def load_master_image(self):
@@ -305,342 +333,121 @@ RECOMENDACIONES:
         messagebox.showinfo("Información de Modos", info_text)
 
     def experiment(self):
-            """Realiza un experimento para evaluar el sistema."""
-            # Paso 1: Construir un grafo de adyacencia desde las conexiones
-            from collections import defaultdict
-            import itertools
-
-            # Crear grafo de adyacencia
-            adjacency = defaultdict(set)
-            for edge in FACE_CONNECTIONS:
-                v1, v2 = edge
-                adjacency[v1].add(v2)
-                adjacency[v2].add(v1)
-
-            # Paso 2: Encontrar todos los triángulos (ciclos de 3 vértices)
-            triangles = set()
-            for v1 in adjacency:
-                neighbors = list(adjacency[v1])
-                # Buscar pares de vecinos que también estén conectados entre sí
-                for i in range(len(neighbors)):
-                    for j in range(i + 1, len(neighbors)):
-                        v2, v3 = neighbors[i], neighbors[j]
-                        # Si v2 y v3 están conectados, tenemos un triángulo
-                        if v3 in adjacency[v2]:
-                            # Ordenar vértices para evitar duplicados
-                            triangle = tuple(sorted([v1, v2, v3]))
-                            triangles.add(triangle)
-
-            triangles = list(triangles)
-            print(f"Número total de triángulos encontrados: {len(triangles)}")
-            print(f"Primeros 10 triángulos: {triangles[:10]}")
-
-            # Paso 3: Detectar landmarks en ambas imágenes
-            landmarks1 = self._get_master_landmarks()
-            landmarks2 = self._get_submitted_landmarks()
-
-            # Paso 4: Función para mapear un triángulo de una cara a otra
-            def map_triangle(triangle_indices, source_landmarks, target_landmarks):
-                """
-                Mapea un triángulo de los landmarks fuente a los landmarks objetivo.
-
-                Args:
-                    triangle_indices: tupla de 3 índices del triángulo
-                    source_landmarks: lista de landmarks de la imagen fuente
-                    target_landmarks: lista de landmarks de la imagen objetivo
-
-                Returns:
-                    tupla con las coordenadas del triángulo en ambas imágenes
-                """
-                # Obtener puntos del triángulo en imagen fuente
-                src_points = np.array([source_landmarks[idx] for idx in triangle_indices], dtype=np.float32)
-
-                # Obtener puntos correspondientes en imagen objetivo
-                dst_points = np.array([target_landmarks[idx] for idx in triangle_indices], dtype=np.float32)
-
-                return src_points, dst_points
-
-            # Paso 5: Ejemplo de mapeo de triángulos
-            if len(triangles) > 0 and len(landmarks1) > 0 and len(landmarks2) > 0:
-                # Tomar el primer triángulo como ejemplo
-                example_triangle = triangles[0]
-                print(f"\nEjemplo de mapeo con triángulo {example_triangle}:")
-
-                src_tri, dst_tri = map_triangle(example_triangle, landmarks1, landmarks2)
-
-                print(f"Puntos en imagen 1: {src_tri}")
-                print(f"Puntos en imagen 2: {dst_tri}")
-
-                # Paso 6: Calcular transformación afín entre triángulos
-                # Esto es útil para warping o análisis de deformación
-                affine_matrix = cv2.getAffineTransform(src_tri, dst_tri)
-                print(f"\nMatriz de transformación afín:\n{affine_matrix}")
-
-                # Paso 7: Visualizar algunos triángulos en ambas imágenes
-                img1_copy = self.master_image.copy()
-                img2_copy = self.submitted_image.copy()
-
-                # Dibujar los primeros 20 triángulos
-                for i, triangle in enumerate(triangles[:20]):
-                    # Color aleatorio para cada triángulo
-                    color = (np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255))
-
-                    # Verificar que todos los índices estén en rango
-                    if all(idx < len(landmarks1) and idx < len(landmarks2) for idx in triangle):
-                        # Dibujar en imagen 1
-                        pts1 = np.array([landmarks1[idx] for idx in triangle], np.int32)
-                        cv2.drawContours(img1_copy, [pts1], 0, color, 2)
-
-                        # Dibujar en imagen 2
-                        pts2 = np.array([landmarks2[idx] for idx in triangle], np.int32)
-                        cv2.drawContours(img2_copy, [pts2], 0, color, 2)
-
-                # Mostrar imágenes con triángulos
-                cv2.imwrite("triangles_image1.png", img1_copy)
-                cv2.imwrite("triangles_image2.png", img2_copy)
-                print("Imágenes guardadas como triangles_image1.png y triangles_image2.png")
-
-                # Paso 8: Análisis de deformación entre caras
-                print("\nAnálisis de deformación:")
-                deformations = []
-                for triangle in triangles[:10]:  # Analizar primeros 10 triángulos
-                    if all(idx < len(landmarks1) and idx < len(landmarks2) for idx in triangle):
-                        src_tri, dst_tri = map_triangle(triangle, landmarks1, landmarks2)
-
-                        # Calcular área de cada triángulo
-                        area1 = cv2.contourArea(src_tri)
-                        area2 = cv2.contourArea(dst_tri)
-
-                        # Calcular cambio de área (deformación)
-                        if area1 > 0:
-                            deformation = abs(area2 - area1) / area1
-                            deformations.append(deformation)
-                            print(f"Triángulo {triangle}: deformación = {deformation:.3f}")
-
-                if deformations:
-                    avg_deformation = np.mean(deformations)
-                    print(f"\nDeformación promedio: {avg_deformation:.3f}")
-
-            # Paso 9: Transferir el primer triángulo de una cara a la otra
-            if len(triangles) > 0:
-                print("\n=== TRANSFERENCIA DE TRIÁNGULO ===")
-                first_triangle = triangles[0]
-                print(f"Transfiriendo triángulo {first_triangle}")
-
-                # Obtener los puntos del triángulo en ambas caras
-                src_tri, dst_tri = map_triangle(first_triangle, landmarks1, landmarks2)
-
-                # Crear máscaras para el triángulo
-                mask1 = np.zeros(self.master_image.shape[:2], dtype=np.uint8)
-                mask2 = np.zeros(self.submitted_image.shape[:2], dtype=np.uint8)
-
-                # Dibujar el triángulo en las máscaras
-                cv2.fillPoly(mask1, [src_tri.astype(np.int32)], 255)
-                cv2.fillPoly(mask2, [dst_tri.astype(np.int32)], 255)
-
-                # Calcular el rectángulo delimitador para cada triángulo
-                rect1 = cv2.boundingRect(src_tri.astype(np.int32))
-                rect2 = cv2.boundingRect(dst_tri.astype(np.int32))
-
-                # Extraer la región del triángulo de la imagen 1
-                x1, y1, w1, h1 = rect1
-                triangle_crop1 = self.master_image[y1:y1+h1, x1:x1+w1].copy()
-                mask_crop1 = mask1[y1:y1+h1, x1:x1+w1]
-
-                # Ajustar las coordenadas del triángulo al crop
-                src_tri_cropped = src_tri - [x1, y1]
-                dst_tri_cropped = dst_tri - [rect2[0], rect2[1]]
-
-                # Calcular la transformación afín
-                warp_mat = cv2.getAffineTransform(
-                    src_tri_cropped.astype(np.float32),
-                    dst_tri_cropped.astype(np.float32)
-                )
-
-                # Aplicar la transformación al triángulo recortado
-                warped_triangle = cv2.warpAffine(
-                    triangle_crop1,
-                    warp_mat,
-                    (rect2[2], rect2[3]),
-                    flags=cv2.INTER_LINEAR
-                )
-
-                # Crear la máscara para el triángulo transformado
-                warped_mask = cv2.warpAffine(
-                    mask_crop1,
-                    warp_mat,
-                    (rect2[2], rect2[3])
-                )
-
-                # Crear una copia de la imagen 2 para mostrar el resultado
-                result_image = self.submitted_image.copy()
-
-                # Aplicar el triángulo transformado a la imagen 2
-                x2, y2, w2, h2 = rect2
-
-                # Asegurarse de que las coordenadas estén dentro de los límites
-                for y in range(h2):
-                    for x in range(w2):
-                        if (y2 + y < result_image.shape[0] and
-                            x2 + x < result_image.shape[1] and
-                            y < warped_mask.shape[0] and
-                            x < warped_mask.shape[1]):
-                            if warped_mask[y, x] > 0:
-                                result_image[y2 + y, x2 + x] = warped_triangle[y, x]
-
-                # Visualizar el proceso
-                # 1. Imagen original con el triángulo marcado
-                img1_triangle = self.master_image.copy()
-                cv2.drawContours(img1_triangle, [src_tri.astype(np.int32)], 0, (0, 255, 0), 3)
-
-                # 2. Imagen destino con el triángulo original marcado
-                img2_triangle = self.submitted_image.copy()
-                cv2.drawContours(img2_triangle, [dst_tri.astype(np.int32)], 0, (0, 0, 255), 3)
-
-                # 3. Resultado con el triángulo transferido
-                cv2.drawContours(result_image, [dst_tri.astype(np.int32)], 0, (255, 0, 0), 2)
-
-                # Guardar las imágenes
-                cv2.imwrite("transfer_1_source.png", img1_triangle)
-                cv2.imwrite("transfer_2_destination.png", img2_triangle)
-                cv2.imwrite("transfer_3_result.png", result_image)
-
-                print("\nImágenes guardadas:")
-                print("- transfer_1_source.png: Imagen 1 con el triángulo fuente (verde)")
-                print("- transfer_2_destination.png: Imagen 2 con el triángulo destino (rojo)")
-                print("- transfer_3_result.png: Imagen 2 con el triángulo transferido desde imagen 1")
-
-                # Información adicional
-                print(f"\nÁrea del triángulo en imagen 1: {cv2.contourArea(src_tri):.2f} píxeles²")
-                print(f"Área del triángulo en imagen 2: {cv2.contourArea(dst_tri):.2f} píxeles²")
-                print(f"Factor de escala: {cv2.contourArea(dst_tri)/cv2.contourArea(src_tri):.3f}")
-
-            # Paso 10: Transferir los 10 triángulos marcados
-            if len(triangles) >= 10:
-                print("\n=== TRANSFERENCIA DE LOS 10 TRIÁNGULOS MARCADOS ===")
-
-                # Crear una copia de la imagen 2 para el resultado
-                result_image = self.submitted_image.copy()
-
-                # Procesar los primeros 10 triángulos (los mismos que se dibujaron)
-                for i, triangle in enumerate(triangles[:10]):
-                    if all(idx < len(landmarks1) and idx < len(landmarks2) for idx in triangle):
-                        print(f"\nProcesando triángulo {i+1}/10: {triangle}")
-
-                        # Obtener los puntos del triángulo en ambas caras
-                        src_tri, dst_tri = map_triangle(triangle, landmarks1, landmarks2)
-
-                        # Crear máscaras para el triángulo
-                        mask1 = np.zeros(self.master_image.shape[:2], dtype=np.uint8)
-                        mask2 = np.zeros(self.submitted_image.shape[:2], dtype=np.uint8)
-
-                        # Dibujar el triángulo en las máscaras
-                        cv2.fillPoly(mask1, [src_tri.astype(np.int32)], 255)
-                        cv2.fillPoly(mask2, [dst_tri.astype(np.int32)], 255)
-
-                        # Calcular el rectángulo delimitador para cada triángulo
-                        rect1 = cv2.boundingRect(src_tri.astype(np.int32))
-                        rect2 = cv2.boundingRect(dst_tri.astype(np.int32))
-
-                        # Extraer la región del triángulo de la imagen 1
-                        x1, y1, w1, h1 = rect1
-                        triangle_crop1 = self.master_image[y1:y1+h1, x1:x1+w1].copy()
-                        mask_crop1 = mask1[y1:y1+h1, x1:x1+w1]
-
-                        # Ajustar las coordenadas del triángulo al crop
-                        src_tri_cropped = src_tri - [x1, y1]
-                        dst_tri_cropped = dst_tri - [rect2[0], rect2[1]]
-
-                        # Calcular la transformación afín
-                        warp_mat = cv2.getAffineTransform(
-                            src_tri_cropped.astype(np.float32),
-                            dst_tri_cropped.astype(np.float32)
-                        )
-
-                        # Aplicar la transformación al triángulo recortado
-                        warped_triangle = cv2.warpAffine(
-                            triangle_crop1,
-                            warp_mat,
-                            (rect2[2], rect2[3]),
-                            flags=cv2.INTER_LINEAR
-                        )
-
-                        # Crear la máscara para el triángulo transformado
-                        warped_mask = cv2.warpAffine(
-                            mask_crop1,
-                            warp_mat,
-                            (rect2[2], rect2[3])
-                        )
-
-                        # Aplicar el triángulo transformado a la imagen resultado
-                        x2, y2, w2, h2 = rect2
-
-                        # Transferir píxel por píxel
-                        for y in range(h2):
-                            for x in range(w2):
-                                if (y2 + y < result_image.shape[0] and
-                                    x2 + x < result_image.shape[1] and
-                                    y < warped_mask.shape[0] and
-                                    x < warped_mask.shape[1]):
-                                    if warped_mask[y, x] > 0:
-                                        result_image[y2 + y, x2 + x] = warped_triangle[y, x]
-
-                        # Calcular y mostrar información del triángulo
-                        area1 = cv2.contourArea(src_tri)
-                        area2 = cv2.contourArea(dst_tri)
-                        if area1 > 0:
-                            scale_factor = area2 / area1
-                            print(f"  - Área en imagen 1: {area1:.1f} px²")
-                            print(f"  - Área en imagen 2: {area2:.1f} px²")
-                            print(f"  - Factor de escala: {scale_factor:.3f}")
-
-                # Crear imagen de comparación con los triángulos marcados
-                comparison_img1 = self.master_image.copy()
-                comparison_img2 = result_image.copy()
-
-                # Dibujar contornos de los 10 triángulos transferidos
-                for i, triangle in enumerate(triangles[:10]):
-                    if all(idx < len(landmarks1) and idx < len(landmarks2) for idx in triangle):
-                        # Color para identificar cada triángulo
-                        color = (0, 255, 0)  # Verde para source
-                        pts1 = np.array([landmarks1[idx] for idx in triangle], np.int32)
-                        cv2.drawContours(comparison_img1, [pts1], 0, color, 2)
-
-                        # Azul para destino
-                        color = (255, 0, 0)
-                        pts2 = np.array([landmarks2[idx] for idx in triangle], np.int32)
-                        cv2.drawContours(comparison_img2, [pts2], 0, color, 2)
-
-                # Guardar las imágenes
-                cv2.imwrite("transfer_10_triangles_source.png", comparison_img1)
-                cv2.imwrite("transfer_10_triangles_result.png", comparison_img2)
-
-                # También guardar el resultado sin contornos
-                cv2.imwrite("transfer_10_triangles_clean.png", result_image)
-
-                print("\n=== TRANSFERENCIA COMPLETADA ===")
-                print("\nImágenes guardadas:")
-                print("- transfer_10_triangles_source.png: Imagen 1 con los 10 triángulos fuente marcados")
-                print("- transfer_10_triangles_result.png: Resultado con los triángulos transferidos y marcados")
-                print("- transfer_10_triangles_clean.png: Resultado sin marcas (solo la transferencia)")
-
-                # Crear una imagen lado a lado para comparación
-                h1, w1 = self.master_image.shape[:2]
-                h2, w2 = self.submitted_image.shape[:2]
-                max_height = max(h1, h2)
-
-                # Crear canvas para comparación
-                comparison = np.zeros((max_height, w1 + w2 + 10, 3), dtype=np.uint8)
-                comparison[:h1, :w1] = comparison_img1
-                comparison[:h2, w1+10:] = comparison_img2
-
-                # Añadir línea divisoria
-                comparison[:, w1:w1+10] = [128, 128, 128]
-
-                cv2.imwrite("transfer_10_triangles_comparison.png", comparison)
-                print("- transfer_10_triangles_comparison.png: Comparación lado a lado")
-            else:
-                print("No se pudieron detectar landmarks o triángulos.")
+        """Realiza un experimento para evaluar el sistema."""
+        # Paso 1: Construir un grafo de adyacencia desde las conexiones
+        from collections import defaultdict
+        import itertools
+
+        # Crear grafo de adyacencia
+        adjacency = defaultdict(set)
+        for edge in FACE_CONNECTIONS:
+            v1, v2 = edge
+            adjacency[v1].add(v2)
+            adjacency[v2].add(v1)
+
+        # Paso 2: Encontrar todos los triángulos (ciclos de 3 vértices)
+        triangles = set()
+        for v1 in adjacency:
+            neighbors = list(adjacency[v1])
+            # Buscar pares de vecinos que también estén conectados entre sí
+            for i in range(len(neighbors)):
+                for j in range(i + 1, len(neighbors)):
+                    v2, v3 = neighbors[i], neighbors[j]
+                    # Si v2 y v3 están conectados, tenemos un triángulo
+                    if v3 in adjacency[v2]:
+                        # Ordenar vértices para evitar duplicados
+                        triangle = tuple(sorted([v1, v2, v3]))
+                        triangles.add(triangle)
+
+        triangles = list(triangles)
+        print(f"Número total de triángulos encontrados: {len(triangles)}")
+        print(f"Primeros 10 triángulos: {triangles[:10]}")
+
+        # Paso 3: Detectar landmarks en ambas imágenes
+        landmarks1 = self._get_master_landmarks()
+        landmarks2 = self._get_submitted_landmarks()
+
+        # Paso 4: Función para mapear un triángulo de una cara a otra
+        def map_triangle(triangle_indices, source_landmarks, target_landmarks):
+            """
+            Mapea un triángulo de los landmarks fuente a los landmarks objetivo.
+
+            Args:
+                triangle_indices: tupla de 3 índices del triángulo
+                source_landmarks: lista de landmarks de la imagen fuente
+                target_landmarks: lista de landmarks de la imagen objetivo
+
+            Returns:
+                tupla con las coordenadas del triángulo en ambas imágenes
+            """
+            # Obtener puntos del triángulo en imagen fuente
+            src_points = np.array([source_landmarks[idx] for idx in triangle_indices], dtype=np.float32)
+
+            # Obtener puntos correspondientes en imagen objetivo
+            dst_points = np.array([target_landmarks[idx] for idx in triangle_indices], dtype=np.float32)
+
+            return src_points, dst_points
+
+        # Paso 5: Ejemplo de mapeo de triángulos
+        if len(triangles) > 0 and len(landmarks1) > 0 and len(landmarks2) > 0:
+            # Tomar el primer triángulo como ejemplo
+            example_triangle = triangles[0]
+            print(f"\nEjemplo de mapeo con triángulo {example_triangle}:")
+
+            src_tri, dst_tri = map_triangle(example_triangle, landmarks1, landmarks2)
+
+            print(f"Puntos en imagen 1: {src_tri}")
+            print(f"Puntos en imagen 2: {dst_tri}")
+
+            # Paso 6: Calcular transformación afín entre triángulos
+            # Esto es útil para warping o análisis de deformación
+            affine_matrix = cv2.getAffineTransform(src_tri, dst_tri)
+            print(f"\nMatriz de transformación afín:\n{affine_matrix}")
+
+            # Paso 7: Visualizar algunos triángulos en ambas imágenes
+            img1_copy = self.master_image.copy()
+            img2_copy = self.submitted_image.copy()
+
+            # Dibujar los primeros 20 triángulos
+            for i, triangle in enumerate(triangles[:20]):
+                # Color aleatorio para cada triángulo
+                color = (np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255))
+
+                # Verificar que todos los índices estén en rango
+                if all(idx < len(landmarks1) and idx < len(landmarks2) for idx in triangle):
+                    # Dibujar en imagen 1
+                    pts1 = np.array([landmarks1[idx] for idx in triangle], np.int32)
+                    cv2.drawContours(img1_copy, [pts1], 0, color, 2)
+
+                    # Dibujar en imagen 2
+                    pts2 = np.array([landmarks2[idx] for idx in triangle], np.int32)
+                    cv2.drawContours(img2_copy, [pts2], 0, color, 2)
+
+            # Mostrar imágenes con triángulos
+            cv2.imwrite("triangles_image1.png", img1_copy)
+            cv2.imwrite("triangles_image2.png", img2_copy)
+            print("Imágenes guardadas como triangles_image1.png y triangles_image2.png")
+
+            # Paso 8: Análisis de deformación entre caras
+            print("\nAnálisis de deformación:")
+            deformations = []
+            for triangle in triangles[:10]:  # Analizar primeros 10 triángulos
+                if all(idx < len(landmarks1) and idx < len(landmarks2) for idx in triangle):
+                    src_tri, dst_tri = map_triangle(triangle, landmarks1, landmarks2)
+
+                    # Calcular área de cada triángulo
+                    area1 = cv2.contourArea(src_tri)
+                    area2 = cv2.contourArea(dst_tri)
+
+                    # Calcular cambio de área (deformación)
+                    if area1 > 0:
+                        deformation = abs(area2 - area1) / area1
+                        deformations.append(deformation)
+                        print(f"Triángulo {triangle}: deformación = {deformation:.3f}")
+
+            if deformations:
+                avg_deformation = np.mean(deformations)
+                print(f"\nDeformación promedio: {avg_deformation:.3f}")
 
     def experiment_2(self):
         if self.master_image is None or self.submitted_image is None:
@@ -878,6 +685,307 @@ RECOMENDACIONES:
         self.submitted_landmarks = None
         messagebox.showinfo("Experiment 3", "Face swap completed in both images.")
 
+    def experiment_3_improved(self):
+        """Improved Face swap using consistent triangulation and expression handling."""
+        if self.master_image is None or self.submitted_image is None:
+            messagebox.showerror("Error", "Both images must be loaded for face swap.")
+            return
+        
+        # Keep originals for warping
+        orig_master = self.master_image.copy()
+        orig_submitted = self.submitted_image.copy()
+        
+        # Get landmarks
+        lm1 = np.array(self._get_master_landmarks(), np.int32)
+        lm2 = np.array(self._get_submitted_landmarks(), np.int32)
+        
+        # Use consistent triangulation based on MediaPipe connections
+        triangles = self._get_consistent_triangulation()
+        
+        # Prepare blank warped face images
+        h1, w1 = orig_master.shape[:2]
+        h2, w2 = orig_submitted.shape[:2]
+        face_warp_to_submitted = np.zeros_like(orig_submitted)
+        face_warp_to_master = np.zeros_like(orig_master)
+
+        # Improved warp helper with better interpolation
+        def warp_triangle_improved(img_src, img_dst, t_src, t_dst):
+            """Improved triangle warping with better boundary handling."""
+            try:
+                # Ensure triangles are valid
+                if cv2.contourArea(np.float32(t_src)) < 1 or cv2.contourArea(np.float32(t_dst)) < 1:
+                    return
+                
+                r1 = cv2.boundingRect(np.float32([t_src]))
+                r2 = cv2.boundingRect(np.float32([t_dst]))
+                x1, y1, w1_, h1_ = r1
+                x2, y2, w2_, h2_ = r2
+                
+                # Check bounds
+                if x1 < 0 or y1 < 0 or x1+w1_ > img_src.shape[1] or y1+h1_ > img_src.shape[0]:
+                    return
+                if x2 < 0 or y2 < 0 or x2+w2_ > img_dst.shape[1] or y2+h2_ > img_dst.shape[0]:
+                    return
+                
+                src_rect = np.array([[pt[0]-x1, pt[1]-y1] for pt in t_src], np.float32)
+                dst_rect = np.array([[pt[0]-x2, pt[1]-y2] for pt in t_dst], np.float32)
+                
+                crop = img_src[y1:y1+h1_, x1:x1+w1_]
+                if crop.size == 0:
+                    return
+                    
+                M = cv2.getAffineTransform(src_rect, dst_rect)
+                warped = cv2.warpAffine(crop, M, (w2_, h2_), 
+                                      flags=cv2.INTER_LINEAR, 
+                                      borderMode=cv2.BORDER_REFLECT_101)
+                
+                # Create precise triangle mask
+                mask = np.zeros((h2_, w2_), dtype=np.uint8)
+                cv2.fillConvexPoly(mask, np.int32(dst_rect), 255)
+                
+                # Apply warped triangle to destination
+                dst_roi = img_dst[y2:y2+h2_, x2:x2+w2_]
+                dst_roi[mask == 255] = warped[mask == 255]
+                
+            except Exception as e:
+                print(f"Warning: Triangle warp failed: {e}")
+
+        # Expression-aware landmark adjustment
+        lm1_adjusted, lm2_adjusted = self._adjust_for_expression_differences(lm1, lm2)
+        
+        # Warp using consistent triangulation
+        print("Warping faces with consistent triangulation...")
+        
+        # Warp master -> submitted using adjusted landmarks
+        for triangle in triangles:
+            if all(idx < len(lm1_adjusted) and idx < len(lm2_adjusted) for idx in triangle):
+                t_src = [lm1_adjusted[idx] for idx in triangle]
+                t_dst = [lm2_adjusted[idx] for idx in triangle]
+                warp_triangle_improved(orig_master, face_warp_to_submitted, t_src, t_dst)
+        
+        # Warp submitted -> master using adjusted landmarks  
+        for triangle in triangles:
+            if all(idx < len(lm1_adjusted) and idx < len(lm2_adjusted) for idx in triangle):
+                t_src = [lm2_adjusted[idx] for idx in triangle]
+                t_dst = [lm1_adjusted[idx] for idx in triangle]
+                warp_triangle_improved(orig_submitted, face_warp_to_master, t_src, t_dst)
+
+        # Create better face masks using convex hull of facial landmarks
+        face_landmarks_1 = self._get_facial_boundary_landmarks(lm1)
+        face_landmarks_2 = self._get_facial_boundary_landmarks(lm2)
+        
+        hull1 = cv2.convexHull(np.array(face_landmarks_1))
+        hull2 = cv2.convexHull(np.array(face_landmarks_2))
+        
+        mask1 = np.zeros((h1, w1), dtype=np.uint8)
+        mask2 = np.zeros((h2, w2), dtype=np.uint8)
+        cv2.fillConvexPoly(mask1, hull1, 255)
+        cv2.fillConvexPoly(mask2, hull2, 255)
+        
+        # Apply Gaussian blur to masks for smoother blending
+        mask1 = cv2.GaussianBlur(mask1, (5, 5), 0)
+        mask2 = cv2.GaussianBlur(mask2, (5, 5), 0)
+        
+        # Calculate centers for seamless cloning
+        rc1 = cv2.boundingRect(hull1)
+        rc2 = cv2.boundingRect(hull2)
+        center1 = (rc1[0] + rc1[2]//2, rc1[1] + rc1[3]//2)
+        center2 = (rc2[0] + rc2[2]//2, rc2[1] + rc2[3]//2)
+        
+        # Seamless clone with better blending
+        try:
+            swapped_submitted = cv2.seamlessClone(face_warp_to_submitted, orig_submitted, 
+                                                mask2, center2, cv2.NORMAL_CLONE)
+            swapped_master = cv2.seamlessClone(face_warp_to_master, orig_master, 
+                                             mask1, center1, cv2.NORMAL_CLONE)
+        except Exception as e:
+            print(f"Seamless cloning failed, using direct blending: {e}")
+            # Fallback to alpha blending
+            swapped_submitted = self._alpha_blend(orig_submitted, face_warp_to_submitted, mask2)
+            swapped_master = self._alpha_blend(orig_master, face_warp_to_master, mask1)
+        
+        # Update images
+        self.master_image = swapped_master
+        self.submitted_image = swapped_submitted
+        
+        # Display results
+        self.display_image(self.submitted_image, self.submitted_image_label)
+        self.display_image(self.master_image, self.master_image_label)
+        
+        # Clear caches
+        self.master_landmarks = None
+        self.submitted_landmarks = None
+        
+        messagebox.showinfo("Improved Face Swap", "Expression-aware face swap completed!")
+
+    def _adjust_for_expression_differences(self, lm1, lm2):
+        """Adjust landmarks to handle expression differences between faces."""
+        lm1_adj = lm1.copy()
+        lm2_adj = lm2.copy()
+        
+        # Eye region adjustment
+        left_eye_indices = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
+        right_eye_indices = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
+        
+        # Detect if eyes are in different states (open vs closed)
+        left_eye_openness_1 = self._calculate_eye_openness(lm1, left_eye_indices)
+        left_eye_openness_2 = self._calculate_eye_openness(lm2, left_eye_indices)
+        right_eye_openness_1 = self._calculate_eye_openness(lm1, right_eye_indices)
+        right_eye_openness_2 = self._calculate_eye_openness(lm2, right_eye_indices)
+        
+        # If eye states are very different, apply adjustment
+        if abs(left_eye_openness_1 - left_eye_openness_2) > 0.3:
+            lm1_adj, lm2_adj = self._normalize_eye_landmarks(lm1_adj, lm2_adj, left_eye_indices)
+        
+        if abs(right_eye_openness_1 - right_eye_openness_2) > 0.3:
+            lm1_adj, lm2_adj = self._normalize_eye_landmarks(lm1_adj, lm2_adj, right_eye_indices)
+        
+        # Mouth region adjustment
+        mouth_indices = [0, 17, 18, 200, 199, 175, 61, 84, 17, 314, 405, 320, 307, 375, 321, 308, 324, 318]
+        
+        mouth_openness_1 = self._calculate_mouth_openness(lm1, mouth_indices)
+        mouth_openness_2 = self._calculate_mouth_openness(lm2, mouth_indices)
+        
+        if abs(mouth_openness_1 - mouth_openness_2) > 0.4:
+            lm1_adj, lm2_adj = self._normalize_mouth_landmarks(lm1_adj, lm2_adj, mouth_indices)
+        
+        return lm1_adj, lm2_adj
+
+    def _calculate_eye_openness(self, landmarks, eye_indices):
+        """Calculate eye openness ratio."""
+        try:
+            if len(eye_indices) < 6:
+                return 0.5
+            
+            # Get top and bottom eye points
+            top_points = [landmarks[eye_indices[i]] for i in [2, 3]]
+            bottom_points = [landmarks[eye_indices[i]] for i in [4, 5]]
+            
+            # Calculate average vertical distance
+            vertical_dist = np.mean([
+                np.linalg.norm(np.array(top_points[i]) - np.array(bottom_points[i])) 
+                for i in range(min(len(top_points), len(bottom_points)))
+            ])
+            
+            # Calculate horizontal distance for normalization
+            horizontal_dist = np.linalg.norm(
+                np.array(landmarks[eye_indices[0]]) - np.array(landmarks[eye_indices[1]])
+            )
+            
+            return vertical_dist / horizontal_dist if horizontal_dist > 0 else 0.5
+        except:
+            return 0.5
+
+    def _calculate_mouth_openness(self, landmarks, mouth_indices):
+        """Calculate mouth openness ratio."""
+        try:
+            # Top and bottom lip center points
+            top_lip = landmarks[13]  # Upper lip center
+            bottom_lip = landmarks[14]  # Lower lip center
+            
+            # Mouth corners
+            left_corner = landmarks[61]
+            right_corner = landmarks[291]
+            
+            vertical_dist = np.linalg.norm(np.array(top_lip) - np.array(bottom_lip))
+            horizontal_dist = np.linalg.norm(np.array(left_corner) - np.array(right_corner))
+            
+            return vertical_dist / horizontal_dist if horizontal_dist > 0 else 0.1
+        except:
+            return 0.1
+
+    def _normalize_eye_landmarks(self, lm1, lm2, eye_indices):
+        """Normalize eye landmarks to handle open/closed differences."""
+        # Calculate the center and average position
+        center1 = np.mean([lm1[idx] for idx in eye_indices[:4]], axis=0)
+        center2 = np.mean([lm2[idx] for idx in eye_indices[:4]], axis=0)
+        
+        # For closed eyes, move landmarks toward the center slightly
+        openness1 = self._calculate_eye_openness(lm1, eye_indices)
+        openness2 = self._calculate_eye_openness(lm2, eye_indices)
+        
+        target_openness = (openness1 + openness2) / 2  # Average openness
+        
+        # Adjust landmarks toward target openness
+        for idx in eye_indices:
+            if idx < len(lm1) and idx < len(lm2):
+                # Move landmarks toward/away from center based on target openness
+                direction1 = lm1[idx] - center1
+                direction2 = lm2[idx] - center2
+                
+                # Apply adjustment factor
+                adjustment_factor = 0.3  # How much to adjust
+                if openness1 < target_openness:
+                    lm1[idx] = center1 + direction1 * (1 + adjustment_factor)
+                elif openness1 > target_openness:
+                    lm1[idx] = center1 + direction1 * (1 - adjustment_factor)
+                    
+                if openness2 < target_openness:
+                    lm2[idx] = center2 + direction2 * (1 + adjustment_factor)
+                elif openness2 > target_openness:
+                    lm2[idx] = center2 + direction2 * (1 - adjustment_factor)
+        
+        return lm1, lm2
+
+    def _normalize_mouth_landmarks(self, lm1, lm2, mouth_indices):
+        """Normalize mouth landmarks to handle open/closed differences."""
+        # Similar to eye normalization but for mouth
+        mouth_center_indices = [13, 14, 61, 291]  # Key mouth points
+        center1 = np.mean([lm1[idx] for idx in mouth_center_indices], axis=0)
+        center2 = np.mean([lm2[idx] for idx in mouth_center_indices], axis=0)
+        
+        openness1 = self._calculate_mouth_openness(lm1, mouth_indices)
+        openness2 = self._calculate_mouth_openness(lm2, mouth_indices)
+        
+        target_openness = (openness1 + openness2) / 2
+        
+        # Adjust inner mouth landmarks more than outer ones
+        inner_mouth_indices = [13, 14, 12, 15]  # Upper/lower lip centers
+        
+        for idx in inner_mouth_indices:
+            if idx < len(lm1) and idx < len(lm2):
+                direction1 = lm1[idx] - center1
+                direction2 = lm2[idx] - center2
+                
+                adjustment_factor = 0.4
+                if openness1 < target_openness:
+                    lm1[idx] = center1 + direction1 * (1 + adjustment_factor)
+                elif openness1 > target_openness:
+                    lm1[idx] = center1 + direction1 * (1 - adjustment_factor)
+                    
+                if openness2 < target_openness:
+                    lm2[idx] = center2 + direction2 * (1 + adjustment_factor)
+                elif openness2 > target_openness:
+                    lm2[idx] = center2 + direction2 * (1 - adjustment_factor)
+        
+        return lm1, lm2
+
+    def _get_facial_boundary_landmarks(self, landmarks):
+        """Get landmarks that define the facial boundary for better masking."""
+        # Face oval landmarks from MediaPipe
+        face_oval_indices = [
+            10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 340,
+            346, 347, 348, 349, 350, 451, 452, 453, 464, 435, 410, 454,
+            227, 116, 117, 118, 119, 120, 121, 128, 126, 142, 36, 205,
+            206, 207, 213, 192, 147, 123, 116, 117, 118, 119, 120, 121
+        ]
+        
+        # Filter valid indices
+        valid_indices = [idx for idx in face_oval_indices if idx < len(landmarks)]
+        
+        # Return corresponding landmark points
+        return [landmarks[idx] for idx in valid_indices]
+
+    def _alpha_blend(self, background, foreground, mask):
+        """Fallback alpha blending method."""
+        mask_norm = mask.astype(np.float64) / 255.0
+        mask_norm = np.stack([mask_norm] * 3, axis=2)
+        
+        blended = background.astype(np.float64) * (1 - mask_norm) + \
+                  foreground.astype(np.float64) * mask_norm
+        
+        return blended.astype(np.uint8)
+
     def analyze_expression(self):
         """Analiza la expresión facial en ambas imágenes."""
         if self.master_image is None and self.submitted_image is None:
@@ -888,13 +996,15 @@ RECOMENDACIONES:
             # Analizar Subject 1
             if self.master_image is not None:
                 landmarks1 = self._get_master_landmarks()
-                analysis1 = self.smile_detector.analyze_expression(landmarks1)
+                analysis1 = self.smile_eye_detector.analyze_expression(landmarks1)
                 
-                # Visualizar
-                result_img1 = self.smile_detector.visualize_detection(
-                    self.master_image, landmarks1, analysis1
-                )
-                self.display_image(result_img1, self.master_image_label)
+                # Visualizar usando analyze_multiple_faces para una sola cara
+                multi_result1 = self.smile_eye_detector.analyze_multiple_faces(self.master_image)
+                if multi_result1['num_faces'] > 0:
+                    result_img1 = self.smile_eye_detector.visualize_multiple_faces(
+                        self.master_image, multi_result1
+                    )
+                    self.display_image(result_img1, self.master_image_label)
                 
                 # Mostrar resultados en el panel de texto
                 self.features_text.delete(1.0, tk.END)
@@ -904,13 +1014,15 @@ RECOMENDACIONES:
             # Analizar Subject 2
             if self.submitted_image is not None:
                 landmarks2 = self._get_submitted_landmarks()
-                analysis2 = self.smile_detector.analyze_expression(landmarks2)
+                analysis2 = self.smile_eye_detector.analyze_expression(landmarks2)
                 
-                # Visualizar
-                result_img2 = self.smile_detector.visualize_detection(
-                    self.submitted_image, landmarks2, analysis2
-                )
-                self.display_image(result_img2, self.submitted_image_label)
+                # Visualizar usando analyze_multiple_faces para una sola cara
+                multi_result2 = self.smile_eye_detector.analyze_multiple_faces(self.submitted_image)
+                if multi_result2['num_faces'] > 0:
+                    result_img2 = self.smile_eye_detector.visualize_multiple_faces(
+                        self.submitted_image, multi_result2
+                    )
+                    self.display_image(result_img2, self.submitted_image_label)
                 
                 # Agregar resultados al panel
                 if self.master_image is not None:
@@ -974,8 +1086,8 @@ RECOMENDACIONES:
             landmarks1 = self._get_master_landmarks()
             landmarks2 = self._get_submitted_landmarks()
             
-            analysis1 = self.smile_detector.analyze_expression(landmarks1)
-            analysis2 = self.smile_detector.analyze_expression(landmarks2)
+            analysis1 = self.smile_eye_detector.analyze_expression(landmarks1)
+            analysis2 = self.smile_eye_detector.analyze_expression(landmarks2)
             
             # Crear ventana de comparación
             comp_window = tk.Toplevel(self.root)
@@ -996,8 +1108,11 @@ RECOMENDACIONES:
             images_frame.pack(fill=tk.BOTH, expand=True)
             
             # Visualizar ambas imágenes con detecciones
-            img1_viz = self.smile_detector.visualize_detection(self.master_image, landmarks1, analysis1)
-            img2_viz = self.smile_detector.visualize_detection(self.submitted_image, landmarks2, analysis2)
+            multi_result1 = self.smile_eye_detector.analyze_multiple_faces(self.master_image)
+            multi_result2 = self.smile_eye_detector.analyze_multiple_faces(self.submitted_image)
+            
+            img1_viz = self.smile_eye_detector.visualize_multiple_faces(self.master_image, multi_result1)
+            img2_viz = self.smile_eye_detector.visualize_multiple_faces(self.submitted_image, multi_result2)
             
             # Redimensionar para mostrar
             scale = 0.5
